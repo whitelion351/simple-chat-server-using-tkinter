@@ -14,7 +14,9 @@ class AppWindow(tk.Tk):
 
         self.server_address = None
         self.server_port = None
-        self.username = ""
+        self.username = "Server"
+
+        self.user_list_labels = []
 
         self.title("Server")
         self.canvas = tk.Canvas(self, height=self.WINDOW_HEIGHT, width=self.WINDOW_WIDTH)
@@ -34,12 +36,6 @@ class AppWindow(tk.Tk):
         self.client_dict = {}
         self.connection_socket = None
         self.connection_thread = None
-
-    def start_app(self):
-        server_thread = Thread(target=self.server_listen_thread, daemon=True)
-        server_thread.start()
-        self.create_chat_screen()
-        self.mainloop()
 
     def server_listen_thread(self):
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -61,49 +57,70 @@ class AppWindow(tk.Tk):
                 else:
                     self.remove_connection(notified_socket)
 
+    def accept_connection(self):
+        s, addy = self.connection_socket.accept()
+        s.send((bytes("what", "utf-8")))
+        resp = s.recv(1024).decode()
+        user_names = []
+        for c in self.get_user_names():
+            user_names.append(c)
+        if resp in user_names:
+            print("username already exists")
+            s.send(bytes([0]))
+            s.close()
+            return
+        else:
+            s.send(bytes([len(user_names)]))
+            for u in user_names:
+                s.send(bytes(u, "utf-8"))
+                ack = s.recv(1)
+                if int.from_bytes(ack, byteorder="little") != 1:
+                    print("error sending user list. aborting connection")
+                    s.close()
+                    return
+        msg = "<" + resp + " has connected>"
+        print(msg, "from {}".format(addy[0]))
+        self.socket_list.append(s)
+        self.client_dict[s] = {"username": resp}
+        self.total_clients = len(self.client_dict)
+        self.update_status_line("{} client(s) connected".format(self.total_clients))
+        self.update_chat_history(msg)
+        self.update_send(1, resp)
+        self.refresh_user_list()
+
     def remove_connection(self, conn):
         msg = "<" + self.client_dict[conn]["username"] + " has disconnected>"
         print(msg)
-        conn.close()
+        self.update_chat_history(msg)
         self.socket_list.remove(conn)
+        self.update_send(2, self.client_dict[conn]["username"])
         del self.client_dict[conn]
-        self.update_chat_history(msg)
-        self.update_send(msg)
+        conn.close()
         self.total_clients = len(self.client_dict)
         self.update_status_line("{} client(s) connected".format(self.total_clients))
-
-    def accept_connection(self):
-        s, addr = self.connection_socket.accept()
-        s.send((bytes("what", "utf-8")))
-        resp = s.recv(1024)
-        msg = "<" + resp.decode() + " has connected>"
-        print(msg, "from {}".format(addr[0]))
-        self.socket_list.append(s)
-        self.client_dict[s] = {"username": resp.decode()}
-        self.total_clients = len(self.client_dict)
-        self.update_status_line("{} client(s) connected".format(self.total_clients))
-        self.update_chat_history(msg)
-        self.update_send(msg)
+        self.refresh_user_list()
 
     def msg_receive(self, conn):
         msg = conn.recv(1024)
         if len(msg) == 0:
             self.remove_connection(conn)
         else:
-            self.update_chat_history(msg.decode())
+            msg_string = self.client_dict[conn]["username"] + ": " + msg.decode("utf-8", "<could not decode>")
+            self.update_chat_history(msg_string)
             for c in self.socket_list:
                 if c != self.connection_socket:
-                    c.send(msg)
+                    c.send(bytes([3]))
+                    c.send(bytes(msg_string, "utf-8"))
 
     def msg_send(self, event=None):
         msg = event.widget.get()
         event.widget.delete(0, tk.END)
         if len(msg) > 0:
-            msg = "Server: " + msg
-            self.update_chat_history(msg)
+            msg_string = self.username + ": " + msg
+            self.update_chat_history(msg_string)
             for c in self.socket_list:
                 if c != self.connection_socket:
-                    c.send(bytes(msg, "utf-8"))
+                    c.send(bytes(msg_string, "utf-8"))
 
     def update_chat_history(self, msg):
         self.chat_widgets[0].configure(state="normal")
@@ -111,40 +128,94 @@ class AppWindow(tk.Tk):
         self.chat_widgets[0].see(tk.END)
         self.chat_widgets[0].configure(state="disabled")
 
-    def update_send(self, msg):
+    def update_send(self, msg_type, msg_data):
+        """
+        For sending data other than client messages, such as joins and leaves
+        """
         for c in self.socket_list:
             if c != self.connection_socket:
-                c.send(bytes(msg, "utf-8"))
+                c.send(bytes([msg_type]))
+                c.send(bytes(msg_data, "utf-8"))
 
     def create_chat_screen(self):
         chat_history_w = 30
         chat_history_h = 30
         chat_history = scrolledtext.ScrolledText(self.upper_frame, width=chat_history_w, height=chat_history_h,
-                                                 font=("modern", 16), wrap=tk.WORD, state="disabled")
+                                                 font=("modern", 12), wrap=tk.WORD, state="disabled")
+        chat_history.place(relx=0.02, rely=0.02, relwidth=0.96, relheight=0.95)
         chat_history.bind("<1>", lambda event: chat_history.focus_set())
-        chat_history.place(anchor="center", relx=0.5, rely=0.5, relwidth=0.95, relheight=0.95)
         self.chat_widgets.append(chat_history)
 
-        text_entry = tk.Entry(self.lower_frame, width=40, font=("modern", 20))
+        text_entry = tk.Entry(self.lower_frame, width=40, font=("modern", 12))
         text_entry.place(anchor="center", relx=0.5, rely=0.48, relwidth=0.97, relheight=0.5)
+        text_entry.focus_set()
         text_entry.bind("<Return>", self.msg_send)
         self.chat_widgets.append(text_entry)
 
-        close_button = tk.Button(self.upper_frame, text="Close App", command=self.stop_app)
-        close_button.place(anchor="center", relx=0.93, rely=0.05)
+        user_list_frame = tk.Frame(self.upper_frame, bg="#00C1FF")
+        user_list_frame.place(relx=0.98, rely=0.02, relwidth=0.30, relheight=0.95)
+        user_list_frame.bind("<1>", self.toggle_user_list)
+        user_list_bg = tk.Frame(user_list_frame, bg="#FFFFFF")
+        user_list_bg.place(relx=0.1, rely=0.03, relwidth=0.8, relheight=0.94)
+        self.chat_widgets.append(user_list_frame)
+
+        close_button = tk.Button(self, text="Close App", command=self.stop_app)
+        close_button.place(anchor="center", relx=0.895, rely=0.02)
         self.chat_widgets.append(close_button)
 
-    @staticmethod
-    def stop_app():
-        sys.exit()
+    def toggle_user_list(self, event=None):
+        if event:
+            x = float(event.widget.place_info()["relx"])
+            if x > 0.9:
+                self.refresh_user_list()
+                self.chat_widgets[0].place(relwidth=0.68)
+                event.widget.place(relx=0.7)
+            else:
+                self.chat_widgets[0].place(relwidth=0.96)
+                event.widget.place(relx=0.98)
 
-    def update_status_line(self, text, anchor="e", relx=0.95, rely=0.83):
+    def get_user_names(self):
+        user_names = [self.username]
+        for u in self.client_dict.values():
+            user_names.append(u["username"])
+        return sorted(user_names)
+
+    def refresh_user_list(self):
+        for u in self.user_list_labels:
+            u.destroy()
+        user_list_labels = []
+        y_pos = 0.05
+        y_inc = 0.05
+        for user in self.get_user_names():
+            label = tk.Label(self.chat_widgets[2], text=user, bg="#FFFFFF", anchor="w")
+            if user == self.username:
+                label.configure(font=("modern", 12, "bold"))
+            else:
+                label.configure(font=("modern", 12))
+            label.place(relx=0.1, rely=y_pos, relwidth=0.8)
+            user_list_labels.append(label)
+            y_pos += y_inc
+        self.user_list_labels = user_list_labels
+
+    def update_status_line(self, text, anchor="e", rel_x=0.95, rely=0.83):
         if self.status_line is None:
             self.status_line = tk.Label(self, text=text)
         else:
             self.status_line.configure(text=text)
-        self.status_line.place(anchor=anchor, relx=relx, rely=rely)
+        self.status_line.place(anchor=anchor, relx=rel_x, rely=rely)
         self.update_idletasks()
+
+    def start_app(self):
+        server_thread = Thread(target=self.server_listen_thread, daemon=True)
+        server_thread.start()
+        self.create_chat_screen()
+        self.mainloop()
+
+    def stop_app(self):
+        print("closing server app")
+        for conn in self.socket_list:
+            conn.close()
+        sys.exit()
 
 
 if __name__ == "__main__":
