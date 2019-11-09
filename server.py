@@ -61,6 +61,7 @@ class AppWindow(tk.Tk):
         s, addy = self.connection_socket.accept()
         s.send((bytes("what", "utf-8")))
         resp = s.recv(1024).decode()
+        resp.strip()
         user_names = []
         for c in self.get_user_names():
             user_names.append(c)
@@ -120,13 +121,20 @@ class AppWindow(tk.Tk):
             self.update_chat_history(msg_string)
             for c in self.socket_list:
                 if c != self.connection_socket:
-                    c.send(bytes(msg_string, "utf-8"))
+                    try:
+                        c.send(bytes([3]))
+                        c.send(bytes(msg_string, "utf-8"))
+                    except ConnectionError as e:
+                        print("could not send msg to", self.client_dict[c]["username"])
+                        print(e)
+                        print("removing user")
+                        self.remove_connection(c)
 
     def update_chat_history(self, msg):
         self.chat_widgets[0].configure(state="normal")
         self.chat_widgets[0].insert(tk.END, msg + "\n")
-        self.chat_widgets[0].see(tk.END)
         self.chat_widgets[0].configure(state="disabled")
+        self.chat_widgets[0].see(tk.END)
 
     def update_send(self, msg_type, msg_data):
         """
