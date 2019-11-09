@@ -118,6 +118,7 @@ class AppWindow(tk.Tk):
         user_list_labels = []
         y_pos = 0.05
         y_inc = 0.05
+        self.user_names = sorted(self.user_names)
         for user in self.user_names:
             label = tk.Label(self.chat_widgets[2], text=user, bg="#FFFFFF", anchor="w")
             if user == self.username:
@@ -186,8 +187,8 @@ class AppWindow(tk.Tk):
     def update_chat_history(self, msg):
         self.chat_widgets[0].configure(state="normal")
         self.chat_widgets[0].insert(tk.END, msg + "\n")
-        self.chat_widgets[0].see(tk.END)
         self.chat_widgets[0].configure(state="disabled")
+        self.chat_widgets[0].see(tk.END)
 
     def msg_send(self, event=None):
         msg = event.widget.get()
@@ -250,7 +251,6 @@ class AppWindow(tk.Tk):
             user_names.append(conn.recv(1024).decode("utf-8", "n/a"))
             conn.send(bytes([1]))
         self.user_names = sorted(user_names)
-        print("current users:", self.user_names)
 
     def start_app(self):
         self.create_chat_screen()
